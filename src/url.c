@@ -373,8 +373,6 @@ url_get_method_name(URL this) {
   switch (this->method){
     case POST:
       return "POST";
-    case PATCH:
-      return "PATCH";
     case PUT:
       return "PUT";
     case DELETE:
@@ -573,13 +571,8 @@ __url_parse(URL this, char *url)
   ptr = __url_set_scheme(this, ptr);
 
   post = strstr(this->url, " POST");
-
   if (! post) {
     post = strstr(this->url, " PUT");
-  }
-	
-  if (! post) {
-    post = strstr(this->url, " PATCH");
   }
 
   if (post != NULL){
@@ -587,14 +580,10 @@ __url_parse(URL this, char *url)
       this->method = PUT;
       *post = '\0';
       post += 4;
-    } else if (!strncasecmp(post," POST", 5)) {
+    } else {
       this->method = POST;
       *post = '\0';
       post += 5;
-    } else {
-      this->method = PATCH;
-      *post = '\0';
-      post += 6;
     }
     __parse_post_data(this, post);
   } else {
@@ -639,6 +628,25 @@ __parse_post_data(URL this, char *datap)
     } else {
       this->conttype = xstrdup("application/x-www-form-urlencoded");
     }
+
+    // decode any \n in the post data into actual new line characters
+    size_t i = 0;
+    size_t j = 0;
+    size_t postlen = this->postlen;
+    while (j < postlen) {
+      if (j < postlen - 1 && this->postdata[j] == '\\' && this->postdata[j+1] == 'n') {
+        this->postdata[i] = '\n';
+        j++;
+        this->postlen -= 1;
+      } else {
+        this->postdata[i] = this->postdata[j];
+      }
+      i++;
+      j++;
+    }
+
+    this->postdata[this->postlen] = '\0';
+
     return;
   }
 
@@ -847,22 +855,8 @@ __url_set_hostname(URL this, char *str)
     memmove(str, str+n, len - n + 1);
   }
 
-  /**
-   * Check for IPv6 address. The convention here is to use square brackets
-   * around the IPv6 address in order to have a clear delimitation between
-   * address and port
-   */
-  if (startswith("[", str)) {
-    /* skip to matching square bracket */
-    for (i = 0; str[i] && str[i] != ']'; i++);
-
-    if (str[i] == ']') {
-      i++;
-    }
-  } else {
-    /* skip to end, slash, or port colon */
-    for (i = 0; str[i] && str[i] != '/' && str[i] != '#' && str[i] != ':'; i++);
-  }
+  /* skip to end, slash, or port colon */
+  for (i = 0; str[i] && str[i] != '/' && str[i] != '#' && str[i] != ':'; i++);
 
   this->hostname = xmalloc(i + 1);
   memset(this->hostname, '\0', i+1);
@@ -1160,7 +1154,7 @@ __url_has_method(const char *url)
    unsigned int i = 0;
    const char * r = NULL;
    static const char* const methods[] = {
-     " GET", " HEAD", " POST", " PUT", " TRACE", " DELETE", " OPTIONS", " CONNECT", " PATCH"
+     " GET", " HEAD", " POST", " PUT", " TRACE", " DELETE", " OPTIONS", " CONNECT"
    };
 
    for (i = 0; i < sizeof(methods) / sizeof(methods[0]); i++) {
@@ -1176,8 +1170,7 @@ __url_escape(const char *s)
 {
   const char *p1;
   char *newstr, *p2;
-  int oldlen, newlen, host_len;
-  char *path_start, *host_start;
+  int oldlen, newlen;
 
   int encode_count = 0;
   int decode_count = 0;
@@ -1191,24 +1184,9 @@ __url_escape(const char *s)
     return (char *)s;
   }  
 
-  /* skip directly to path */
-  host_start = strstr(s, "//");
-  if (host_start) {
-    host_start += 2;
-  } else {
-    host_start = (char *)s;
-  }
-
-  path_start = strstr(host_start, "/");
-  if (path_start) {
-    path_start += 1;
-  } else { /* there is no path to escape */
-    return (char *)s;
-  }
-
   /* First, pass through the string to see if there's anything to do,
      and to calculate the new length.  */
-  for (p1 = path_start; *p1; p1++) {
+  for (p1 = s; *p1; p1++) {
     switch (decide_copy_method (p1)) {
       case CM_ENCODE:
         ++encode_count;
@@ -1225,16 +1203,13 @@ __url_escape(const char *s)
     return (char *)s; /* C const model sucks. */
 
   oldlen = p1 - s;
-  host_len = path_start - s;
   /* Each encoding adds two characters (hex digits), while each
      decoding removes two characters.  */
   newlen = oldlen + 2 * (encode_count - decode_count);
   newstr = xmalloc (newlen + 1);
 
-  /* copy unmodified to new_str up to path_start */
-  memcpy(newstr, s, host_len);
-  p1 = path_start;
-  p2 = newstr + host_len;
+  p1 = s;
+  p2 = newstr;
 
   while (*p1) {
     switch (decide_copy_method (p1)) {
